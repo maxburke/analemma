@@ -22,6 +22,8 @@
 #pragma warning(disable:4204)
 #endif
 
+#include "http_server.h"
+
 #ifndef MIN
 #define MIN(a, b) ((a)<(b)?(a):(b))
 #endif
@@ -34,6 +36,8 @@ HANDLE g_work_available;
 HANDLE g_shutdown;
 DWORD g_num_threads;
 HANDLE *g_threads;
+__declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_work_list;
+__declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_free_list;
 
 void
 error_log_close(void)
@@ -92,9 +96,6 @@ struct work_item_t
     int name_length;
 };
 
-__declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_work_list;
-__declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_free_list;
-
 static void
 client_shutdown_connection(SOCKET connection)
 {
@@ -132,8 +133,11 @@ client_receive_request(SOCKET connection, char **buffer)
 
     do
     {
+        int alloc_size;
+
         buffer_size += 4096;
-        request_buffer = realloc(request_buffer, buffer_size);
+        alloc_size = buffer_size + 1;
+        request_buffer = realloc(request_buffer, alloc_size);
 
         if (request_buffer == NULL)
         {
@@ -142,6 +146,9 @@ client_receive_request(SOCKET connection, char **buffer)
 
         bytes_received = recv(connection, request_buffer + total_bytes_received, buffer_size - total_bytes_received, 0);
         total_bytes_received += bytes_received;
+
+        assert(total_bytes_received < alloc_size);
+        request_buffer[total_bytes_received] = 0;
     } while (bytes_received != 0);
 
     *buffer = request_buffer;
@@ -156,109 +163,24 @@ client_reset_work_item(struct work_item_t *work_item)
 }
 
 static void
-client_send_error(SOCKET connection, int error)
+client_send_response(SOCKET connection, enum http_status_t status, char *response, int response_length)
 {
+    UNUSED(connection);
+    UNUSED(status);
+    UNUSED(response);
+    UNUSED(response_length);
+
     __debugbreak();
 }
 
-enum http_status_t
+static void
+client_send_error(SOCKET connection, int status)
 {
-    /*
-    * Informational
-    */
-    HTTP_STATUS_CONTINUE = 100,
-    HTTP_STATUS_SWITCHING_PROTOCOLS = 101,
-    HTTP_STATUS_PROCESSING = 102,
+    UNUSED(connection);
+    UNUSED(status);
 
-    /*
-    * Success
-    */
-    HTTP_STATUS_OK = 200,
-    HTTP_STATUS_CREATED = 201,
-    HTTP_STATUS_ACCEPTED = 202,
-    HTTP_STATUS_NON_AUTHORITATIVE_INFORMATION = 203,
-    HTTP_STATUS_NO_CONTENT = 204,
-    HTTP_STATUS_RESET_CONTENT = 205,
-    HTTP_STATUS_PARTIAL_CONTENT = 206,
-    HTTP_STATUS_MULTI_STATUS = 207,
-    HTTP_STATUS_ALREADY_REPORTED = 208,
-    HTTP_STATUS_IM_USED = 226,
-
-    /*
-    * 3xx errors are for redirecting users to other resources.
-    */
-    HTTP_STATUS_MULTIPLE_CHOICES = 300,
-    HTTP_STATUS_MOVED_PERMANENTLY = 301,
-    HTTP_STATUS_FOUND = 302,
-    HTTP_STATUS_SEE_OTHER = 303,
-    HTTP_STATUS_NOT_MODIFIED = 304,
-    HTTP_STATUS_USE_PROXY = 305,
-    HTTP_STATUS_SWITCH_PROXY = 306,
-    HTTP_STATUS_TEMPORARY_REDIRECT = 307,
-    HTTP_STATUS_PERMANENT_REDIRECT = 308,
-
-    /*
-    * 4xx series codes are for errors in the user request.
-    */
-    HTTP_STATUS_BAD_REQUEST = 400,
-    HTTP_STATUS_UNAUTHORIZED = 401,
-    HTTP_STATUS_PAYMENT_REQUIRED = 402,
-    HTTP_STATUS_FORBIDDEN = 403,
-    HTTP_STATUS_NOT_FOUND = 404,
-    HTTP_STATUS_METHOD_NOT_ALLOWED = 405,
-    HTTP_STATUS_NOT_ACCEPTABLE = 406,
-    HTTP_STATUS_PROXY_AUTHENTICATION_REQUIRED = 407,
-    HTTP_STATUS_REQUEST_TIMEOUT = 408,
-    HTTP_STATUS_CONFLICT = 409,
-    HTTP_STATUS_GONE = 410,
-    HTTP_STATUS_LENGTH_REQUIRED = 411,
-    HTTP_STATUS_PRECONDITION_FAILED = 412,
-    HTTP_STATUS_REQUEST_ENTITY_TOO_LARGE = 413,
-    HTTP_STATUS_REQUEST_URI_TOO_LONG = 414,
-    HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE = 415,
-    HTTP_STATUS_REQUESTED_RANGE_NOT_SATISFIABLE = 416,
-    HTTP_STATUS_EXPECTATION_FAILED = 417,
-    HTTP_STATUS_AUTHENTICATION_TIMEOUT = 419,
-    HTTP_STATUS_UNPROCESSABLE_ENTITY = 422,
-    HTTP_STATUS_LOCKED = 423,
-    HTTP_STATUS_FAILED_DEPENDENCY = 424,
-    HTTP_STATUS_UPGRADE_REQUIRED = 426,
-    HTTP_STATUS_PRECONDITION_REQUIRED = 428,
-    HTTP_STATUS_TOO_MANY_REQUESTS = 429,
-    HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE = 431,
-    HTTP_STATUS_CERT_ERROR = 495,
-    HTTP_STATUS_NO_CERT = 496,
-    HTTP_STATUS_HTTP_TO_HTTPS = 497,
-    HTTP_STATUS_TOKEN_EXPIRED = 498,
-    HTTP_STATUS_CLIENT_CLOSED_REQUEST = 499,
-
-    /*
-    * 5xx series codes are server faults.
-    */
-    HTTP_STATUS_INTERNAL_SERVER_ERROR = 500,
-    HTTP_STATUS_NOT_IMPLEMENTED = 501,
-    HTTP_STATUS_BAD_GATEWAY = 502,
-    HTTP_STATUS_SERVICE_UNAVAILABLE = 503,
-    HTTP_STATUS_GATEWAY_TIMEOUT = 504,
-    HTTP_STATUS_HTTPVERSION_NOT_SUPPORTED = 505,
-    HTTP_STATUS_VARIANT_ALSO_NEGOTIATES = 506,
-    HTTP_STATUS_INSUFFICIENT_STORAGE = 507,
-    HTTP_STATUS_LOOP_DETECTED = 508,
-    HTTP_STATUS_NOT_EXTENDED = 510,
-    HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED = 511
-};
-
-enum http_method_t
-{
-    HTTP_METHOD_GET,
-    HTTP_METHOD_PUT,
-    HTTP_METHOD_POST,
-    HTTP_METHOD_DELETE
-};
-
-struct request_t
-{
-};
+    __debugbreak();
+}
 
 static DWORD WINAPI 
 client_worker_thread(LPVOID parameter)
@@ -273,7 +195,8 @@ client_worker_thread(LPVOID parameter)
         DWORD wait_result;
         char *request_buffer;
         int request_length;
-        struct request_t *request;
+        int rv;
+        struct http_request_t *request;
 
         wait_result = WaitForMultipleObjects(ARRAY_COUNT(handles), handles, FALSE, INFINITE);
         if (wait_result == WAIT_OBJECT_0)
@@ -299,11 +222,32 @@ client_worker_thread(LPVOID parameter)
             return 1;
         }
 
-        request = client_parse_request(request_buffer, request_length);
+        rv = http_parse_request(&request, request_buffer, request_length);
 
-        if (request == NULL)
+        if (rv != HTTP_SUCCESS)
         {
             client_send_error(connection, HTTP_STATUS_BAD_REQUEST);
+        }
+        else
+        {
+            struct http_response_t *response;
+            char response_buffer[512];
+            enum http_status_t status;
+
+            status = http_dispatch_request(&response, request);
+            while (http_response_copy_data(response_buffer, sizeof response_buffer, response) == HTTP_ERROR_MORE_DATA)
+            {
+                int send_rv;
+
+                send_rv = send(connection, response_buffer, sizeof response_buffer, 0);
+
+                if (send_rv == SOCKET_ERROR)
+                {
+                    break;
+                }
+            }
+
+            http_response_free(response);
         }
 
         client_shutdown_connection(connection);
@@ -425,6 +369,15 @@ client_begin(void)
     closesocket(incoming_socket);
     SetEvent(g_shutdown);
     WaitForMultipleObjects(g_num_threads, g_threads, TRUE, INFINITE);
+}
+
+static enum http_status_t
+overview_handler(struct http_response_t *response, struct http_request_t *request)
+{
+    UNUSED(response);
+    UNUSED(request);
+
+    return HTTP_STATUS_OK;
 }
 
 int
