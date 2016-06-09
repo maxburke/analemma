@@ -134,15 +134,21 @@ client_receive_request(SOCKET connection, char **buffer)
     do
     {
         int alloc_size;
+        char *new_block;
 
         buffer_size += 4096;
         alloc_size = buffer_size + 1;
-        request_buffer = realloc(request_buffer, alloc_size);
 
-        if (request_buffer == NULL)
+        new_block = realloc(request_buffer, alloc_size);
+
+        if (new_block == NULL)
         {
+            free(request_buffer);
+
             return -1;
         }
+
+        request_buffer = new_block;
 
         bytes_received = recv(connection, request_buffer + total_bytes_received, buffer_size - total_bytes_received, 0);
         total_bytes_received += bytes_received;
@@ -233,13 +239,14 @@ client_worker_thread(LPVOID parameter)
             struct http_response_t *response;
             char response_buffer[512];
             enum http_status_t status;
+            size_t bytes_serialized;
 
             status = http_dispatch_request(&response, request);
-            while (http_response_copy_data(response_buffer, sizeof response_buffer, response) == HTTP_ERROR_MORE_DATA)
+            while (http_response_serialize_data(response_buffer, sizeof response_buffer, &bytes_serialized, response) == HTTP_MORE_DATA)
             {
                 int send_rv;
 
-                send_rv = send(connection, response_buffer, sizeof response_buffer, 0);
+                send_rv = send(connection, response_buffer, bytes_serialized, 0);
 
                 if (send_rv == SOCKET_ERROR)
                 {
@@ -250,6 +257,7 @@ client_worker_thread(LPVOID parameter)
             http_response_free(response);
         }
 
+        http_request_free(request);
         client_shutdown_connection(connection);
 
         free(request_buffer);
@@ -276,6 +284,8 @@ spawn_worker_threads(void)
     ENFORCE(g_work_available != NULL, "Unable to initialize semaphore: %d", GetLastError());
 
     g_threads = calloc(num_threads, sizeof(HANDLE));
+    assert(g_threads != NULL);
+
     g_num_threads = num_threads;
 
     for (i = 0; i < num_threads; ++i)
@@ -320,8 +330,9 @@ client_begin(void)
 
         incoming_connection = accept(incoming_socket, (struct sockaddr *)&connecting_name, &connecting_name_length);
 
-        if (incoming_socket == INVALID_SOCKET)
+        if (incoming_connection == INVALID_SOCKET)
         {
+            error_log("accept() returned error %d", WSAGetLastError());
             continue;
         }
 
@@ -367,7 +378,12 @@ client_begin(void)
     }
 
     closesocket(incoming_socket);
-    SetEvent(g_shutdown);
+
+    if (g_shutdown != NULL)
+    {
+        SetEvent(g_shutdown);
+    }
+
     WaitForMultipleObjects(g_num_threads, g_threads, TRUE, INFINITE);
 }
 
