@@ -1,12 +1,16 @@
 #ifdef _MSC_VER
 #pragma warning(push, 0)
+#define _CRT_SECURE_NO_WARNINGS
 #endif
 #include <assert.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _MSC_VER
 #pragma warning(pop)
+#define strdup _strdup
+#define snprintf _snprintf
 #endif
 
 #include "http_server.h"
@@ -20,12 +24,99 @@
 
 #define UNUSED(x) (void)x
 #define ARRAY_COUNT(x) ((sizeof(x))/sizeof(x[0]))
+#define MIN(a,b) ((a)<(b)?(a):(b))
+
+struct linked_header_field_t
+{
+    struct header_field_t header;
+    struct linked_header_field_t *next;
+};
 
 struct http_response_t
 {
-    struct header_field_t *headers;
-    char *body;
+    struct linked_header_field_t *headers;
+    const char *body;
     int body_length;
+    char *raw_headers;
+    int raw_headers_length;
+    enum http_status_t status;
+
+    int serializing;
+    struct linked_header_field_t *current_header;
+    const char *body_ptr;
+};
+
+struct http_status_string_t
+{
+    int status;
+    const char *text;
+};
+
+struct http_status_string_t g_status_strings[] = {
+    { 100, "Continue" },
+    { 101, "Switching Protocols" },
+    { 102, "Processing" },
+    { 200, "Ok" },
+    { 201, "Created" },
+    { 202, "Accepted" },
+    { 203, "Non Authoritative Information" },
+    { 204, "No Content" },
+    { 205, "Reset Content" },
+    { 206, "Partial Content" },
+    { 207, "Multi Status" },
+    { 208, "Already Reported" },
+    { 226, "Im Used" },
+    { 300, "Multiple Choices" },
+    { 301, "Moved Permanently" },
+    { 302, "Found" },
+    { 303, "See Other" },
+    { 304, "Not Modified" },
+    { 305, "Use Proxy" },
+    { 306, "Switch Proxy" },
+    { 307, "Temporary Redirect" },
+    { 308, "Permanent Redirect" },
+    { 400, "Bad Request" },
+    { 401, "Unauthorized" },
+    { 402, "Payment Required" },
+    { 403, "Forbidden" },
+    { 404, "Not Found" },
+    { 405, "Method Not Allowed" },
+    { 406, "Not Acceptable" },
+    { 407, "Proxy Authentication Required" },
+    { 408, "Request Timeout" },
+    { 409, "Conflict" },
+    { 410, "Gone" },
+    { 411, "Length Required" },
+    { 412, "Precondition Failed" },
+    { 413, "Request Entity Too Large" },
+    { 414, "Request Uri Too Long" },
+    { 415, "Unsupported Media Type" },
+    { 416, "Requested Range Not Satisfiable" },
+    { 417, "Expectation Failed" },
+    { 419, "Authentication Timeout" },
+    { 422, "Unprocessable Entity" },
+    { 423, "Locked" },
+    { 424, "Failed Dependency" },
+    { 426, "Upgrade Required" },
+    { 428, "Precondition Required" },
+    { 429, "Too Many Requests" },
+    { 431, "Request Header Fields Too Large" },
+    { 495, "Cert Error" },
+    { 496, "No Cert" },
+    { 497, "Http To Https" },
+    { 498, "Token Expired" },
+    { 499, "Client Closed Request" },
+    { 500, "Internal Server Error" },
+    { 501, "Not Implemented" },
+    { 502, "Bad Gateway" },
+    { 503, "Service Unavailable" },
+    { 504, "Gateway Timeout" },
+    { 505, "Httpversion Not Supported" },
+    { 506, "Variant Also Negotiates" },
+    { 507, "Insufficient Storage" },
+    { 508, "Loop Detected" },
+    { 510, "Not Extended" },
+    { 511, "Network Authentication Required" },
 };
 
 static const char NEW_LINE[] = "\x0d\x0a";
@@ -207,6 +298,8 @@ http_parse_headers(char **buf, struct http_request_t *request, char *ptr, char *
     request->num_header_fields = num_header_fields;
     request->headers = calloc(num_header_fields, sizeof(struct header_field_t));
 
+    assert(request->headers != NULL);
+
     for (i = 0; i < num_header_fields; ++i)
     {
         char *entry_separator;
@@ -289,18 +382,21 @@ http_parse_request(struct http_request_t **request_ptr, char *request_buffer, in
     *request_ptr = request;
 
 parse_request_failed:
-    client_free_request(request);
+    http_request_free(request);
     *request_ptr = NULL;
     return rv;
 }
 
 void
-client_free_request(struct http_request_t *request)
+http_request_free(struct http_request_t *request)
 {
+    if (!request)
+        return;
+    free(request->headers);
     free(request);
 }
 
-enum http_status_t
+int
 http_dispatch_request(struct http_response_t **response_ptr, struct http_request_t *request)
 {
     int i;
@@ -322,6 +418,9 @@ http_dispatch_request(struct http_response_t **response_ptr, struct http_request
                 struct http_response_t *response;
 
                 response = calloc(1, sizeof(struct http_response_t));
+                http_response_add_header(response, "Connection", "close");
+                http_response_add_header(response, "Content-Type", "text/html");
+
                 *response_ptr = response;
 
                 return endpoint->handler(response, request);
@@ -333,11 +432,227 @@ http_dispatch_request(struct http_response_t **response_ptr, struct http_request
 }
 
 int
-http_response_copy_data(char *buf, size_t buffer_size, struct http_response_t *response)
+http_response_add_header(struct http_response_t *response, const char *key, const char *value)
 {
-    UNUSED(buf);
-    UNUSED(buffer_size);
-    UNUSED(response);
+    struct linked_header_field_t *header;
+
+    if (response->serializing)
+    {
+        return HTTP_ERROR_ALREADY_SERIALIZING;
+    }
+
+    for (header = response->headers; header != NULL; header = header->next)
+    {
+        if (strcmp(header->header.key, key) != 0)
+        {
+            continue;
+        }
+
+        /*
+         * If a header key exists in the current response the behavior is to
+         * replace it with a new value but return a warning that this action
+         * has taken place.
+         */
+        free((char *)header->header.value);
+        header->header.value = strdup(value);
+
+        return HTTP_WARNING_HEADER_ALREADY_SET;
+    }
+
+    header = calloc(1, sizeof(struct header_field_t));
+    assert(header != NULL);
+
+    header->header.key = strdup(key);
+    header->header.value = strdup(value);
+    header->next = response->headers;
+    response->headers = header;
+
+    return HTTP_SUCCESS;
+}
+
+int
+http_response_set_body(struct http_response_t *response, const void **previous_body, const void *body, int body_length)
+{
+    int rv;
+    char content_length_string[11];
+
+    if (response->serializing)
+    {
+        return HTTP_ERROR_ALREADY_SERIALIZING;
+    }
+
+    /*
+     * Because replacing the response body with a different one may lead to a
+     * resource leak, this function will return a warning indicating that this
+     * happened.
+     */
+    if (response->body)
+    {
+        if (previous_body)
+        {
+            *previous_body = response->body;
+        }
+
+        rv = HTTP_WARNING_BODY_ALREADY_SET;
+    }
+    else
+    {
+        rv = HTTP_SUCCESS;
+    }
+
+    response->body = body;
+    response->body_length = body_length;
+
+    snprintf(content_length_string, sizeof content_length_string, "%d", body_length);
+    http_response_add_header(response, "Content-Length", content_length_string);
+
+    return rv;
+}
+
+int
+http_response_set_status(struct http_response_t *response, enum http_status_t status)
+{
+    if (response->serializing)
+    {
+        return HTTP_ERROR_ALREADY_SERIALIZING;
+    }
+
+    response->status = status;
+    
+    return HTTP_SUCCESS;
+}
+
+static int
+status_comparer(const void *p1, const void *p2)
+{
+    const struct http_status_string_t *s1 = p1;
+    const struct http_status_string_t *s2 = p2;
+    
+    return s1->status - s2->status;
+}
+
+int
+http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serialized, struct http_response_t *response)
+{
+    char *ptr;
+    size_t bytes_remaining;
+    const char *end;
+    size_t bytes_to_copy;
+
+    *bytes_serialized = 0;
+
+    if (!response->serializing)
+    {
+        struct http_status_string_t key;
+        struct http_status_string_t *result;
+        size_t rv;
+
+        key.status = response->status;
+        result = bsearch(&key, g_status_strings, ARRAY_COUNT(g_status_strings), sizeof(struct http_status_string_t), status_comparer);
+
+        rv = snprintf(buf, buffer_size, "HTTP/1.1 %d %s%s", result->status, result->text, NEW_LINE);
+        if (rv >= buffer_size)
+        {
+            return HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE;
+        }
+
+        *bytes_serialized = rv;
+
+        response->serializing = 1;
+        response->current_header = response->headers;
+
+        return HTTP_MORE_DATA;
+    }
+
+    /*
+     * Serialize headers
+     */
+    ptr = buf;
+    bytes_remaining = buffer_size;
+    while (response->current_header != NULL)
+    {
+        size_t header_length;
+        size_t rv;
+
+        header_length = strlen(response->current_header->header.key)
+            + ENTRY_SEPARATOR_LENGTH
+            + strlen(response->current_header->header.value)
+            + NEW_LINE_LENGTH;
+
+        if (header_length > bytes_remaining)
+        {
+            if (*bytes_serialized == 0)
+            {
+                return HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE;
+            }
+
+            return HTTP_MORE_DATA;
+        }
+
+        rv = snprintf(
+            ptr,
+            bytes_remaining,
+            "%s%s%s%s",
+            response->current_header->header.key,
+            ENTRY_SEPARATOR,
+            response->current_header->header.value,
+            NEW_LINE);
+
+        assert(rv == header_length);
+
+        ptr += rv;
+        *bytes_serialized += rv;
+        bytes_remaining -= rv;
+
+        response->current_header = response->current_header->next;
+    }
+
+    /*
+     * A second newline is required after the headers and before the body.
+     */
+    if (response->body_ptr == NULL)
+    {
+        size_t rv;
+
+        if (bytes_remaining < NEW_LINE_LENGTH)
+        {
+            if (*bytes_serialized == 0)
+            {
+                return HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE;
+            }
+
+            return HTTP_MORE_DATA;
+        }
+
+        rv = snprintf(ptr, bytes_remaining, "%s", NEW_LINE);
+        assert(rv == 2);
+
+        ptr += rv;
+        bytes_remaining -= rv;
+
+        response->body_ptr = response->body;
+    }
+
+    /*
+     * Serialize body
+     */
+
+    end = response->body + response->body_length;
+    assert(end >= response->body_ptr);
+    bytes_to_copy = MIN(bytes_remaining, (size_t)(end - response->body_ptr));
+    memmove(ptr, response->body_ptr, bytes_to_copy);
+    response->body_ptr += bytes_to_copy;
+    *bytes_serialized += bytes_to_copy;
+
+    if (response->body_ptr != end)
+    {
+        if (*bytes_serialized == 0)
+        {
+            return HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE;
+        }
+
+        return HTTP_MORE_DATA;
+    }
 
     return HTTP_SUCCESS;
 }
@@ -355,4 +670,3 @@ http_register_endpoints(struct http_endpoint_t *endpoints, int num_endpoints)
     g_endpoints = calloc(num_endpoints, sizeof(struct http_endpoint_t));
     memmove(g_endpoints, endpoints, sizeof(struct http_endpoint_t) * num_endpoints);
 }
-

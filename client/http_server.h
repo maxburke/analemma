@@ -125,7 +125,7 @@ struct http_request_t
 
 struct http_response_t;
 
-typedef enum http_status_t (*http_handler_t)(struct http_response_t *response, const struct http_request_t *request);
+typedef int (*http_handler_t)(struct http_response_t *response, const struct http_request_t *request);
 
 struct http_endpoint_t
 {
@@ -137,10 +137,17 @@ struct http_endpoint_t
 enum http_error_t
 {
     HTTP_SUCCESS = 0,
+
     HTTP_ERROR_UNKNOWN_METHOD = -1,
     HTTP_ERROR_INCOMPLETE_OR_MALFORMED = -2,
     HTTP_ERROR_UNSUPPORTED_HTTP_VERSION = -3,
-    HTTP_ERROR_MORE_DATA = -4
+    HTTP_ERROR_ALREADY_SERIALIZING = -4,
+    HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE = -5,
+
+    HTTP_WARNING_BODY_ALREADY_SET = -6,
+    HTTP_WARNING_HEADER_ALREADY_SET = -7,
+
+    HTTP_MORE_DATA = -8
 };
 
 /*
@@ -150,7 +157,7 @@ int
 http_parse_request(struct http_request_t **request_ptr, char *request_buffer, int request_length);
 
 void
-client_free_request(struct http_request_t *request);
+http_request_free(struct http_request_t *request);
 
 enum http_status_t
 http_dispatch_request(struct http_response_t **response, struct http_request_t *request);
@@ -158,17 +165,17 @@ http_dispatch_request(struct http_response_t **response, struct http_request_t *
 void
 http_register_endpoints(struct http_endpoint_t *endpoints, int num_endpoints);
 
-void
+int
 http_response_add_header(struct http_response_t *response, const char *key, const char *value);
 
-void
-http_response_set_body(struct http_response_t *response, const void *body, int body_length);
+int
+http_response_set_body(struct http_response_t *response, const void **previous_body, const void *body, int body_length);
 
-void
+int
 http_response_set_status(struct http_response_t *response, enum http_status_t status);
 
 int
-http_response_copy_data(char *buf, size_t buffer_size, struct http_response_t *response);
+http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serialized, struct http_response_t *response);
 
 void
 http_response_free(struct http_response_t *response);
