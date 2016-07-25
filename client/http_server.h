@@ -125,7 +125,7 @@ struct http_request_t
 
 struct http_response_t;
 
-typedef int (*http_handler_t)(struct http_response_t *response, const struct http_request_t *request);
+typedef void (*http_handler_t)(struct http_response_t *response, const struct http_request_t *request);
 
 struct http_endpoint_t
 {
@@ -162,7 +162,7 @@ http_parse_request(struct http_request_t **request_ptr, char *request_buffer, in
 void
 http_request_free(struct http_request_t *request);
 
-enum http_status_t
+void
 http_dispatch_request(struct http_response_t **response, struct http_request_t *request);
 
 void

@@ -243,10 +243,9 @@ client_worker_thread(LPVOID parameter)
         {
             struct http_response_t *response;
             char response_buffer[512] = { 0 };
-            enum http_status_t status;
             size_t bytes_serialized;
 
-            status = http_dispatch_request(&response, request);
+            http_dispatch_request(&response, request);
             for (;;)
             {
                 int serialize_rv;
@@ -403,7 +402,7 @@ client_begin(void)
     WaitForMultipleObjects(g_num_threads, g_threads, TRUE, INFINITE);
 }
 
-static int
+static void
 main_handler(struct http_response_t *response, const struct http_request_t *request)
 {
     static char buf[512];
@@ -412,15 +411,12 @@ main_handler(struct http_response_t *response, const struct http_request_t *requ
 
     if (strcmp(request->uri, "/") != 0)
     {
-        http_response_set_status(HTTP_STATUS_NOT_FOUND);
-
-        return HTTP_STATUS_NOT_FOUND;
+        http_response_set_status(response, HTTP_STATUS_NOT_FOUND);
+        return;
     }
 
     rv = snprintf(buf, sizeof buf, "<h1>hello %d!</h1>", ++counter);
     http_response_set_body(response, NULL, buf, strlen(buf));
-
-    return HTTP_STATUS_OK;
 }
 
 int

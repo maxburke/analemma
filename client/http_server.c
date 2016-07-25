@@ -472,16 +472,24 @@ http_request_free(struct http_request_t *request)
     free(request);
 }
 
-int
+void
 http_dispatch_request(struct http_response_t **response_ptr, struct http_request_t *request)
 {
     int i;
     const char *uri;
     enum http_method_t method;
+    struct http_response_t *response;
 
     uri = request->uri;
     method = request->method;
     *response_ptr = NULL;
+
+    response = calloc(1, sizeof(struct http_response_t));
+    http_response_add_header(response, "Connection", "close");
+    http_response_add_header(response, "Content-Type", "text/html");
+    http_response_set_status(response, HTTP_STATUS_OK);
+
+    *response_ptr = response;
 
     for (i = 0; i < g_num_endpoints; ++i)
     {
@@ -491,21 +499,14 @@ http_dispatch_request(struct http_response_t **response_ptr, struct http_request
         {
             if (method & endpoint->supported_methods)
             {
-                struct http_response_t *response;
+                endpoint->handler(response, request);
 
-                response = calloc(1, sizeof(struct http_response_t));
-                http_response_add_header(response, "Connection", "close");
-                http_response_add_header(response, "Content-Type", "text/html");
-                http_response_set_status(response, HTTP_STATUS_OK);
-
-                *response_ptr = response;
-
-                return endpoint->handler(response, request);
+                return;
             }
         }
     }
 
-    return HTTP_STATUS_NOT_FOUND;
+    http_response_set_status(response, HTTP_STATUS_NOT_FOUND);
 }
 
 int
