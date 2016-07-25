@@ -150,6 +150,9 @@ enum http_error_t
     HTTP_MORE_DATA = -8
 };
 
+int
+http_expecting_more(const char *buffer, size_t buffer_length);
+
 /*
  * Returns one of http_error_t enumerated values
  */

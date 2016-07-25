@@ -155,6 +155,11 @@ client_receive_request(SOCKET connection, char **buffer)
 
         assert(total_bytes_received < alloc_size);
         request_buffer[total_bytes_received] = 0;
+
+        if (!http_expecting_more(request_buffer, total_bytes_received))
+        {
+            break;
+        }
     } while (bytes_received != 0);
 
     *buffer = request_buffer;
@@ -237,18 +242,30 @@ client_worker_thread(LPVOID parameter)
         else
         {
             struct http_response_t *response;
-            char response_buffer[512];
+            char response_buffer[512] = { 0 };
             enum http_status_t status;
             size_t bytes_serialized;
 
             status = http_dispatch_request(&response, request);
-            while (http_response_serialize_data(response_buffer, sizeof response_buffer, &bytes_serialized, response) == HTTP_MORE_DATA)
+            for (;;)
             {
+                int serialize_rv;
                 int send_rv;
 
-                send_rv = send(connection, response_buffer, bytes_serialized, 0);
+                serialize_rv = http_response_serialize_data(response_buffer, sizeof response_buffer, &bytes_serialized, response);
+                assert(serialize_rv != HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE);
 
-                if (send_rv == SOCKET_ERROR)
+                if (bytes_serialized > 0)
+                {
+                    send_rv = send(connection, response_buffer, bytes_serialized, 0);
+
+                    if (send_rv == SOCKET_ERROR)
+                    {
+                        break;
+                    }
+                }
+
+                if (serialize_rv == HTTP_SUCCESS)
                 {
                     break;
                 }
@@ -277,7 +294,6 @@ spawn_worker_threads(void)
     DWORD i;
 
     GetSystemInfo(&system_info);
-
     num_threads = MIN(system_info.dwNumberOfProcessors, max_threads);
     g_work_available = CreateSemaphore(NULL, 0, 65535, NULL);
 
@@ -387,11 +403,22 @@ client_begin(void)
     WaitForMultipleObjects(g_num_threads, g_threads, TRUE, INFINITE);
 }
 
-static enum http_status_t
-overview_handler(struct http_response_t *response, struct http_request_t *request)
+static int
+main_handler(struct http_response_t *response, const struct http_request_t *request)
 {
-    UNUSED(response);
-    UNUSED(request);
+    static char buf[512];
+    static int counter;
+    int rv;
+
+    if (strcmp(request->uri, "/") != 0)
+    {
+        http_response_set_status(HTTP_STATUS_NOT_FOUND);
+
+        return HTTP_STATUS_NOT_FOUND;
+    }
+
+    rv = snprintf(buf, sizeof buf, "<h1>hello %d!</h1>", ++counter);
+    http_response_set_body(response, NULL, buf, strlen(buf));
 
     return HTTP_STATUS_OK;
 }
@@ -401,12 +428,16 @@ main(void)
 {
     struct WSAData wsa_data;
     int rv;
+    struct http_endpoint_t endpoints[] = {
+        { "/", HTTP_METHOD_GET, main_handler }
+    };
 
     error_log_open();
 
     rv = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     ENFORCE(rv == NO_ERROR, "Unable to start winsock");
 
+    http_register_endpoints(endpoints, ARRAY_COUNT(endpoints));
     client_begin();
 
     return 0;

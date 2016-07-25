@@ -56,7 +56,7 @@ struct http_status_string_t g_status_strings[] = {
     { 100, "Continue" },
     { 101, "Switching Protocols" },
     { 102, "Processing" },
-    { 200, "Ok" },
+    { 200, "OK" },
     { 201, "Created" },
     { 202, "Accepted" },
     { 203, "Non Authoritative Information" },
@@ -128,6 +128,82 @@ static const size_t HEADER_TERMINATOR_LENGTH = ((sizeof HEADER_TERMINATOR) - 1);
 
 static int g_num_endpoints;
 static struct http_endpoint_t *g_endpoints;
+
+const char *
+http_strnstr(const char *haystack, size_t haystack_length, const char *needle)
+{
+    size_t needle_length;
+    size_t i;
+
+    needle_length = strlen(needle);
+
+    /*
+     * Is Boyer-Moore needed for this? Probably not.
+     */
+
+    /*
+     * Early out if the needle can't be contained in the haystack.
+     */
+    if (haystack_length < needle_length)
+    {
+        return NULL;
+    }
+
+    for (i = 0; i <= haystack_length - needle_length; ++i)
+    {
+        size_t ii;
+
+        for (ii = 0; ii < needle_length; ++ii)
+        {
+            if (haystack[i + ii] != needle[ii])
+                goto no_match;
+        }
+
+        return haystack + i;
+
+    no_match:;
+    }
+
+    return NULL;
+}
+
+int
+http_expecting_more(const char *buffer, size_t buffer_length)
+{
+    const char *terminator;
+    const char *content_length;
+    /*
+     * Search for the header terminator first.
+     */
+
+    terminator = http_strnstr(buffer, buffer_length, HEADER_TERMINATOR);
+    if (terminator == NULL)
+    {
+        /*
+         * No header terminator? Need more data.
+         */
+        return 1;
+    }
+
+    /*
+     * Does the request have a body? Search for a Content-Length header
+     */
+
+    content_length = http_strnstr(buffer, buffer_length, "Content-Length");
+    if (content_length == NULL)
+    {
+        /*
+         * No content length? We're done!
+         */
+        return 0;
+    }
+
+    /*
+     * TODO: Examine content following header to see if it's all here.
+     */
+    __debugbreak();
+    return 1;
+}
 
 static int
 http_parse_method(char **buf, struct http_request_t *request, char *ptr, char *end)
@@ -377,9 +453,9 @@ http_parse_request(struct http_request_t **request_ptr, char *request_buffer, in
         goto parse_request_failed;
     }
 
-    __debugbreak();
-
     *request_ptr = request;
+
+    return HTTP_SUCCESS;
 
 parse_request_failed:
     http_request_free(request);
@@ -420,6 +496,7 @@ http_dispatch_request(struct http_response_t **response_ptr, struct http_request
                 response = calloc(1, sizeof(struct http_response_t));
                 http_response_add_header(response, "Connection", "close");
                 http_response_add_header(response, "Content-Type", "text/html");
+                http_response_set_status(response, HTTP_STATUS_OK);
 
                 *response_ptr = response;
 
@@ -557,18 +634,21 @@ http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serial
         }
 
         *bytes_serialized = rv;
+        ptr = buf + rv;
+        bytes_remaining = buffer_size - rv;
 
         response->serializing = 1;
         response->current_header = response->headers;
-
-        return HTTP_MORE_DATA;
+    }
+    else
+    {
+        ptr = buf;
+        bytes_remaining = buffer_size;
     }
 
     /*
      * Serialize headers
      */
-    ptr = buf;
-    bytes_remaining = buffer_size;
     while (response->current_header != NULL)
     {
         size_t header_length;
@@ -629,6 +709,7 @@ http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serial
 
         ptr += rv;
         bytes_remaining -= rv;
+        *bytes_serialized += NEW_LINE_LENGTH;
 
         response->body_ptr = response->body;
     }
@@ -660,7 +741,7 @@ http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serial
 void
 http_response_free(struct http_response_t *response)
 {
-    UNUSED(response);
+    free(response);
 }
 
 void
