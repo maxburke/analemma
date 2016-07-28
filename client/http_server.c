@@ -122,9 +122,10 @@ struct http_status_string_t g_status_strings[] = {
 static const char NEW_LINE[] = "\x0d\x0a";
 static const char ENTRY_SEPARATOR[] = ": ";
 static const char HEADER_TERMINATOR[] = "\x0d\x0a\x0d\x0a";
-static const size_t NEW_LINE_LENGTH = ((sizeof NEW_LINE) - 1);
-static const size_t ENTRY_SEPARATOR_LENGTH = ((sizeof ENTRY_SEPARATOR) - 1);
-static const size_t HEADER_TERMINATOR_LENGTH = ((sizeof HEADER_TERMINATOR) - 1);
+
+static const size_t NEW_LINE_LENGTH = (sizeof NEW_LINE) - 1;
+static const size_t ENTRY_SEPARATOR_LENGTH = (sizeof ENTRY_SEPARATOR) - 1;
+static const size_t HEADER_TERMINATOR_LENGTH = (sizeof HEADER_TERMINATOR) - 1;
 
 static int g_num_endpoints;
 static struct http_endpoint_t *g_endpoints;
@@ -167,42 +168,80 @@ http_strnstr(const char *haystack, size_t haystack_length, const char *needle)
     return NULL;
 }
 
-int
-http_expecting_more(const char *buffer, size_t buffer_length)
+static int
+http_find_request_body(const char *buffer, size_t buffer_length, const char **request_body_ptr, size_t *content_length_ptr)
 {
     const char *terminator;
     const char *content_length;
+    char *end;
+    size_t content_length_value;
+    const char *request_body;
+    const char content_length_header[] = "Content-Length:";
+
+    *request_body_ptr = NULL;
+    *content_length_ptr = 0;
+
     /*
      * Search for the header terminator first.
      */
-
     terminator = http_strnstr(buffer, buffer_length, HEADER_TERMINATOR);
     if (terminator == NULL)
     {
         /*
          * No header terminator? Need more data.
          */
-        return 1;
+        return HTTP_MORE_DATA;
     }
 
     /*
      * Does the request have a body? Search for a Content-Length header
      */
 
-    content_length = http_strnstr(buffer, buffer_length, "Content-Length");
+    content_length = http_strnstr(buffer, buffer_length, content_length_header);
     if (content_length == NULL)
     {
         /*
          * No content length? We're done!
          */
-        return 0;
+        return HTTP_SUCCESS;
     }
 
-    /*
-     * TODO: Examine content following header to see if it's all here.
-     */
-    __debugbreak();
-    return 1;
+    content_length += (sizeof content_length_header) - 1;
+    content_length_value = strtoul(content_length, &end, 0);
+
+    if (end == content_length)
+    {
+        /*
+         * Unable to parse Content-Length header, assuming it's garbled. 
+         */
+        return HTTP_ERROR_INCOMPLETE_OR_MALFORMED;
+    }
+
+    request_body = terminator + HEADER_TERMINATOR_LENGTH;
+    if (buffer_length - (request_body - buffer) == content_length_value)
+    {
+        /*
+         * All content is here!
+         */
+        *request_body_ptr = request_body;
+        *content_length_ptr = content_length_value;
+
+        return HTTP_SUCCESS;
+    }
+
+    return HTTP_MORE_DATA;
+}
+
+int
+http_expecting_more(const char *buffer, size_t buffer_length)
+{
+    const char *request_body;
+    size_t content_length;
+    int rv;
+
+    rv = http_find_request_body(buffer, buffer_length, &request_body, &content_length);
+
+    return rv;
 }
 
 static int
@@ -419,6 +458,42 @@ header_parse_failed:
     return error;
 }
 
+static int
+http_parse_body(struct http_request_t *request, const char *buffer, int buffer_length)
+{
+    const char *request_body;
+    size_t content_length;
+    int rv;
+    void *body;
+
+    rv = http_find_request_body(buffer, buffer_length, &request_body, &content_length);
+
+    if (rv != HTTP_SUCCESS)
+    {
+        return rv;
+    }
+
+    if (request_body == NULL || content_length == 0)
+    {
+        return HTTP_SUCCESS;
+    }
+
+    body = malloc(content_length + 1);
+    memmove(body, request_body, content_length);
+
+    /*
+     * Assuming most handlers will be treating the body as string data, so
+     * inserting an extra null terminator here at the end to prevent them
+     * from skipping wildly into uninitialized memory.
+     */
+    ((char *)body)[content_length] = 0;
+
+    request->body_length = content_length;
+    request->body = body;
+
+    return HTTP_SUCCESS;
+}
+
 int
 http_parse_request(struct http_request_t **request_ptr, char *request_buffer, int request_length)
 {
@@ -432,6 +507,11 @@ http_parse_request(struct http_request_t **request_ptr, char *request_buffer, in
     request = calloc(1, sizeof(struct http_request_t));
     ptr = request_buffer;
     end = request_buffer + request_length;
+
+    if ((rv = http_parse_body(request, request_buffer, request_length)) != HTTP_SUCCESS)
+    {
+        goto parse_request_failed;
+    }
 
     if ((rv = http_parse_method(&ptr, request, ptr, end)) != HTTP_SUCCESS)
     {
@@ -468,6 +548,8 @@ http_request_free(struct http_request_t *request)
 {
     if (!request)
         return;
+
+    free((void *)request->body);
     free(request->headers);
     free(request);
 }

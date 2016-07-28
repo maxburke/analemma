@@ -121,6 +121,8 @@ struct http_request_t
     enum http_version_t version;
     int num_header_fields;
     struct header_field_t *headers;
+    const void *body;
+    size_t body_length;
 };
 
 struct http_response_t;

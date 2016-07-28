@@ -135,6 +135,7 @@ client_receive_request(SOCKET connection, char **buffer)
     {
         int alloc_size;
         char *new_block;
+        int rv;
 
         buffer_size += 4096;
         alloc_size = buffer_size + 1;
@@ -144,7 +145,6 @@ client_receive_request(SOCKET connection, char **buffer)
         if (new_block == NULL)
         {
             free(request_buffer);
-
             return -1;
         }
 
@@ -156,9 +156,17 @@ client_receive_request(SOCKET connection, char **buffer)
         assert(total_bytes_received < alloc_size);
         request_buffer[total_bytes_received] = 0;
 
-        if (!http_expecting_more(request_buffer, total_bytes_received))
+        rv = http_expecting_more(request_buffer, total_bytes_received);
+
+        if (rv == HTTP_SUCCESS)
         {
             break;
+        }
+
+        if (rv != HTTP_MORE_DATA)
+        {
+            free(request_buffer);
+            return -1;
         }
     } while (bytes_received != 0);
 
@@ -405,18 +413,23 @@ client_begin(void)
 static void
 main_handler(struct http_response_t *response, const struct http_request_t *request)
 {
-    static char buf[512];
-    static int counter;
-    int rv;
-
     if (strcmp(request->uri, "/") != 0)
     {
         http_response_set_status(response, HTTP_STATUS_NOT_FOUND);
         return;
     }
 
-    rv = snprintf(buf, sizeof buf, "<h1>hello %d!</h1>", ++counter);
-    http_response_set_body(response, NULL, buf, strlen(buf));
+    #include "test_form.inl"
+
+    http_response_set_body(response, NULL, test_html, test_html_len);
+}
+
+static void
+post_handler(struct http_response_t *response, const struct http_request_t *request)
+{
+    UNUSED(response);
+    UNUSED(request);
+    __debugbreak();
 }
 
 int
@@ -425,7 +438,8 @@ main(void)
     struct WSAData wsa_data;
     int rv;
     struct http_endpoint_t endpoints[] = {
-        { "/", HTTP_METHOD_GET, main_handler }
+        { "/", HTTP_METHOD_GET, main_handler },
+        { "/", HTTP_METHOD_POST, post_handler }
     };
 
     error_log_open();
