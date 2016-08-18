@@ -108,7 +108,7 @@ enum http_version_t
     HTTP_VERSION_1_1
 };
 
-struct header_field_t
+struct key_value_pair_t
 {
     const char *key;
     const char *value;
@@ -120,7 +120,7 @@ struct http_request_t
     const char *uri;
     enum http_version_t version;
     int num_header_fields;
-    struct header_field_t *headers;
+    struct key_value_pair_t *headers;
     const void *body;
     size_t body_length;
 };
@@ -145,11 +145,14 @@ enum http_error_t
     HTTP_ERROR_UNSUPPORTED_HTTP_VERSION = -3,
     HTTP_ERROR_ALREADY_SERIALIZING = -4,
     HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE = -5,
+    HTTP_ERROR_INCORRECT_CONTENT_TYPE = -6,
 
-    HTTP_WARNING_BODY_ALREADY_SET = -6,
-    HTTP_WARNING_HEADER_ALREADY_SET = -7,
+    HTTP_ERROR_LAST = -7,
 
-    HTTP_MORE_DATA = -8
+    HTTP_WARNING_BODY_ALREADY_SET = HTTP_ERROR_LAST - 1,
+    HTTP_WARNING_HEADER_ALREADY_SET = HTTP_ERROR_LAST - 2,
+
+    HTTP_MORE_DATA = HTTP_ERROR_LAST - 3
 };
 
 int
@@ -184,6 +187,18 @@ http_response_serialize_data(char *buf, size_t buffer_size, size_t *bytes_serial
 
 void
 http_response_free(struct http_response_t *response);
+
+const char *
+http_header_get(const struct http_request_t *request, const char *key);
+
+int
+http_urldecode_post_body_begin(const struct http_request_t *request, size_t *context);
+
+struct key_value_pair_t *
+http_urldecode_post_body_next(const struct http_request_t *request, size_t *context);
+
+void
+http_urldecode_post_body_free(struct key_value_pair_t *);
 
 #ifdef _MSC_VER
 #pragma warning(pop)

@@ -28,7 +28,7 @@
 
 struct linked_header_field_t
 {
-    struct header_field_t header;
+    struct key_value_pair_t header;
     struct linked_header_field_t *next;
 };
 
@@ -411,7 +411,7 @@ http_parse_headers(char **buf, struct http_request_t *request, char *ptr, char *
     }
 
     request->num_header_fields = num_header_fields;
-    request->headers = calloc(num_header_fields, sizeof(struct header_field_t));
+    request->headers = calloc(num_header_fields, sizeof(struct key_value_pair_t));
 
     assert(request->headers != NULL);
 
@@ -419,7 +419,7 @@ http_parse_headers(char **buf, struct http_request_t *request, char *ptr, char *
     {
         char *entry_separator;
         char *entry_end;
-        struct header_field_t *field;
+        struct key_value_pair_t *field;
 
         field = request->headers + i;
         entry_separator = strstr(ptr, ENTRY_SEPARATOR);
@@ -619,7 +619,7 @@ http_response_add_header(struct http_response_t *response, const char *key, cons
         return HTTP_WARNING_HEADER_ALREADY_SET;
     }
 
-    header = calloc(1, sizeof(struct header_field_t));
+    header = calloc(1, sizeof(struct key_value_pair_t));
     assert(header != NULL);
 
     header->header.key = strdup(key);
@@ -833,4 +833,156 @@ http_register_endpoints(struct http_endpoint_t *endpoints, int num_endpoints)
     g_num_endpoints = num_endpoints;
     g_endpoints = calloc(num_endpoints, sizeof(struct http_endpoint_t));
     memmove(g_endpoints, endpoints, sizeof(struct http_endpoint_t) * num_endpoints);
+}
+
+const char *
+http_header_get(const struct http_request_t *request, const char *key)
+{
+    int i;
+    int num_header_fields;
+
+    for (i = 0, num_header_fields = request->num_header_fields; i < num_header_fields; ++i)
+    {
+        if (!strcmp(request->headers[i].key, key))
+        {
+            return request->headers[i].value;
+        }
+    }
+
+    return NULL;
+}
+
+int
+http_urldecode_post_body_begin(const struct http_request_t *request, size_t *context)
+{
+    const char *content_type;
+
+    content_type = http_header_get(request, "Content-Type");
+    if (content_type == NULL || strcmp(content_type, "application/x-www-form-urlencoded") != 0)
+    {
+        *context = (size_t)-1;
+        return HTTP_ERROR_INCORRECT_CONTENT_TYPE;
+    }
+
+    *context = 0;
+    return HTTP_SUCCESS;
+}
+
+static char
+http_from_percent_encoded_value(const char **out, const char *ptr)
+{
+    char c;
+
+    c = *ptr;
+
+    if (c == '%')
+    {
+        char value;
+        char src[3];
+
+        src[0] = ptr[1];
+        src[1] = ptr[2];
+        src[2] = 0;
+        
+        value = (int)strtol(src, NULL, 16);
+        *out = ptr + 3;
+
+        return value;
+    }
+    else if (c == '+')
+    {
+        *out = ptr + 1;
+        return ' ';
+    }
+
+    *out = ptr + 1;
+    return c;
+}
+
+static size_t
+http_percent_encoded_string_length(const char *begin, const char *end)
+{
+    size_t length;
+
+    for (length = 0; begin != end; ++length)
+    {
+        http_from_percent_encoded_value(&begin, begin);
+    }
+
+    return length;
+}
+
+static void
+http_percent_decode_string(char *dest, size_t length, const char *src)
+{
+    size_t i;
+
+    for (i = 0; i < length; ++i)
+    {
+        dest[i] = http_from_percent_encoded_value(&src, src);
+    }
+}
+
+struct key_value_pair_t *
+http_urldecode_post_body_next(const struct http_request_t *request, size_t *context)
+{
+    size_t position;
+    const char *key;
+    const char *key_end;
+    const char *value;
+    const char *value_end;
+    size_t key_length;
+    size_t value_length;
+    size_t alloc_size;
+    struct key_value_pair_t *entry;
+
+    position = *context;
+    if (position >= request->body_length)
+    {
+        return NULL;
+    }
+
+    key = (const char *)request->body + position;
+
+    /*
+     * Validate that the next value has the '=' separating it from the key
+     */
+    key_end = strstr(key, "=");
+
+    if (key_end == NULL)
+    {
+        return NULL;
+    }
+
+    /*
+     * Advance one past the '=' to where the value actually begins
+     */
+    value = key_end + 1;
+
+    value_end = strstr(value, "&");
+
+    if (value_end == NULL)
+    {
+        value_end = (const char *)request->body + request->body_length;
+    }
+    *context = position + (value_end - key) + 1;
+
+    key_length = http_percent_encoded_string_length(key, key_end);
+    value_length = http_percent_encoded_string_length(value, value_end);
+
+    alloc_size = sizeof(struct key_value_pair_t) + key_length + value_length + 2;
+    entry = calloc(alloc_size, 1);
+    entry->key = (const char *)&entry[1];
+    entry->value = entry->key + key_length + 1;
+
+    http_percent_decode_string((char *)entry->key, key_length, key);
+    http_percent_decode_string((char *)entry->value, value_length, value);
+
+    return entry;
+}
+
+void
+http_urldecode_post_body_free(struct key_value_pair_t *entry)
+{
+    free(entry);
 }
