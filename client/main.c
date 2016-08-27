@@ -23,6 +23,7 @@
 #endif
 
 #include "http_server.h"
+#include "log.h"
 
 #ifndef MIN
 #define MIN(a, b) ((a)<(b)?(a):(b))
@@ -39,54 +40,8 @@ HANDLE *g_threads;
 __declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_work_list;
 __declspec(align(MEMORY_ALLOCATION_ALIGNMENT)) SLIST_HEADER g_free_list;
 
-void
-error_log_close(void)
-{
-    if (!g_log)
-    {
-        return;
-    }
-
-    fflush(g_log);
-    fclose(g_log);
-}
-
-void
-error_log_open(void)
-{
-    g_log = fopen("analemma_client.log", "w");
-    atexit(error_log_close);
-}
-
-void
-error_log(const char *format, ...)
-{
-    if (!g_log)
-    {
-        return;
-    }
-
-    time_t current_time;
-    struct tm local_time;
-    time(&current_time);
-    localtime_s(&local_time, &current_time);
-
-    va_list args;
-    va_start(args, format);
-
-    fprintf(g_log, "%4d-%02d-%02dT%02d:%02d:%02d - ",
-        local_time.tm_year + 1900,
-        local_time.tm_mon + 1,
-        local_time.tm_mday,
-        local_time.tm_hour,
-        local_time.tm_min,
-        local_time.tm_sec);
-
-    vfprintf(g_log, format, args);
-    va_end(args);
-}
-
-#define ENFORCE(x, ...) if (!(x)) { error_log(__VA_ARGS__); exit(-1);} else (void)0
+#define ENFORCE(x, ...) if (!(x)) { log(__VA_ARGS__); exit(-1);} else (void)0
+#define ENFORCE_WITH_ERROR(x, error, ...) if (!(x)) { log_os_error(error, __VA_ARGS__); exit(-1);} else (void)0
 
 struct work_item_t
 {
@@ -105,7 +60,7 @@ client_shutdown_connection(SOCKET connection)
     rv = shutdown(connection, SD_SEND);
     if (rv == SOCKET_ERROR)
     {
-        error_log("Unable to shutdown socket: %d", WSAGetLastError());
+        log_os_error(WSAGetLastError(), "Unable to shutdown socket");
         closesocket(connection);
 
         return;
@@ -304,7 +259,7 @@ spawn_worker_threads(void)
     num_threads = MIN(system_info.dwNumberOfProcessors, max_threads);
     g_work_available = CreateSemaphore(NULL, 0, 65535, NULL);
 
-    ENFORCE(g_work_available != NULL, "Unable to initialize semaphore: %d", GetLastError());
+    ENFORCE_WITH_ERROR(g_work_available != NULL, GetLastError(), "Unable to initialize semaphore");
 
     g_threads = calloc(num_threads, sizeof(HANDLE));
     assert(g_threads != NULL);
@@ -355,7 +310,7 @@ client_begin(void)
 
         if (incoming_connection == INVALID_SOCKET)
         {
-            error_log("accept() returned error %d", WSAGetLastError());
+            log_os_error(WSAGetLastError(), "accept() returned error");
             continue;
         }
 
@@ -388,7 +343,7 @@ client_begin(void)
             DWORD last_error;
 
             last_error = GetLastError();
-            error_log("Unable to release semaphore, error: %d", last_error);
+            log_os_error(last_error, "Unable to release semaphore");
 
             break;
         }
@@ -427,9 +382,26 @@ main_handler(struct http_response_t *response, const struct http_request_t *requ
 static void
 post_handler(struct http_response_t *response, const struct http_request_t *request)
 {
-    UNUSED(response);
-    UNUSED(request);
-    __debugbreak();
+    size_t context;
+
+    if (http_urldecode_post_body_begin(request, &context) != HTTP_SUCCESS)
+    {
+        http_response_set_status(response, HTTP_STATUS_BAD_REQUEST);
+    }
+
+    for (;;)
+    {
+        struct http_key_value_pair_t *parameter;
+
+        parameter = http_urldecode_post_body_next(request, &context);
+
+        if (parameter == NULL)
+        {
+            break;
+        }
+
+        http_urldecode_post_body_free(parameter);
+    }
 }
 
 int
@@ -437,12 +409,13 @@ main(void)
 {
     struct WSAData wsa_data;
     int rv;
+
     struct http_endpoint_t endpoints[] = {
         { "/", HTTP_METHOD_GET, main_handler },
         { "/", HTTP_METHOD_POST, post_handler }
     };
 
-    error_log_open();
+    log_init("analemma_client.log");
 
     rv = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     ENFORCE(rv == NO_ERROR, "Unable to start winsock");
