@@ -28,7 +28,7 @@
 
 struct linked_header_field_t
 {
-    struct key_value_pair_t header;
+    struct http_key_value_pair_t header;
     struct linked_header_field_t *next;
 };
 
@@ -411,7 +411,7 @@ http_parse_headers(char **buf, struct http_request_t *request, char *ptr, char *
     }
 
     request->num_header_fields = num_header_fields;
-    request->headers = calloc(num_header_fields, sizeof(struct key_value_pair_t));
+    request->headers = calloc(num_header_fields, sizeof(struct http_key_value_pair_t));
 
     assert(request->headers != NULL);
 
@@ -419,7 +419,7 @@ http_parse_headers(char **buf, struct http_request_t *request, char *ptr, char *
     {
         char *entry_separator;
         char *entry_end;
-        struct key_value_pair_t *field;
+        struct http_key_value_pair_t *field;
 
         field = request->headers + i;
         entry_separator = strstr(ptr, ENTRY_SEPARATOR);
@@ -479,6 +479,12 @@ http_parse_body(struct http_request_t *request, const char *buffer, int buffer_l
     }
 
     body = malloc(content_length + 1);
+
+    if (body == NULL)
+    {
+        return HTTP_ERROR_INSUFFICIENT_RESOURCES;
+    }
+
     memmove(body, request_body, content_length);
 
     /*
@@ -619,7 +625,7 @@ http_response_add_header(struct http_response_t *response, const char *key, cons
         return HTTP_WARNING_HEADER_ALREADY_SET;
     }
 
-    header = calloc(1, sizeof(struct key_value_pair_t));
+    header = calloc(1, sizeof(struct http_key_value_pair_t));
     assert(header != NULL);
 
     header->header.key = strdup(key);
@@ -923,7 +929,7 @@ http_percent_decode_string(char *dest, size_t length, const char *src)
     }
 }
 
-struct key_value_pair_t *
+struct http_key_value_pair_t *
 http_urldecode_post_body_next(const struct http_request_t *request, size_t *context)
 {
     size_t position;
@@ -934,7 +940,7 @@ http_urldecode_post_body_next(const struct http_request_t *request, size_t *cont
     size_t key_length;
     size_t value_length;
     size_t alloc_size;
-    struct key_value_pair_t *entry;
+    struct http_key_value_pair_t *entry;
 
     position = *context;
     if (position >= request->body_length)
@@ -970,8 +976,14 @@ http_urldecode_post_body_next(const struct http_request_t *request, size_t *cont
     key_length = http_percent_encoded_string_length(key, key_end);
     value_length = http_percent_encoded_string_length(value, value_end);
 
-    alloc_size = sizeof(struct key_value_pair_t) + key_length + value_length + 2;
+    alloc_size = sizeof(struct http_key_value_pair_t) + key_length + value_length + 2;
     entry = calloc(alloc_size, 1);
+
+    if (entry == NULL)
+    {
+        return NULL;
+    }
+
     entry->key = (const char *)&entry[1];
     entry->value = entry->key + key_length + 1;
 
@@ -982,7 +994,7 @@ http_urldecode_post_body_next(const struct http_request_t *request, size_t *cont
 }
 
 void
-http_urldecode_post_body_free(struct key_value_pair_t *entry)
+http_urldecode_post_body_free(struct http_key_value_pair_t *entry)
 {
     free(entry);
 }

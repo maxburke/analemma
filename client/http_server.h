@@ -108,7 +108,7 @@ enum http_version_t
     HTTP_VERSION_1_1
 };
 
-struct key_value_pair_t
+struct http_key_value_pair_t
 {
     const char *key;
     const char *value;
@@ -120,7 +120,7 @@ struct http_request_t
     const char *uri;
     enum http_version_t version;
     int num_header_fields;
-    struct key_value_pair_t *headers;
+    struct http_key_value_pair_t *headers;
     const void *body;
     size_t body_length;
 };
@@ -146,8 +146,9 @@ enum http_error_t
     HTTP_ERROR_ALREADY_SERIALIZING = -4,
     HTTP_ERROR_INSUFFICIENT_BUFFER_SIZE = -5,
     HTTP_ERROR_INCORRECT_CONTENT_TYPE = -6,
+    HTTP_ERROR_INSUFFICIENT_RESOURCES = -7,
 
-    HTTP_ERROR_LAST = -7,
+    HTTP_ERROR_LAST = -8,
 
     HTTP_WARNING_BODY_ALREADY_SET = HTTP_ERROR_LAST - 1,
     HTTP_WARNING_HEADER_ALREADY_SET = HTTP_ERROR_LAST - 2,
@@ -194,11 +195,11 @@ http_header_get(const struct http_request_t *request, const char *key);
 int
 http_urldecode_post_body_begin(const struct http_request_t *request, size_t *context);
 
-struct key_value_pair_t *
+struct http_key_value_pair_t *
 http_urldecode_post_body_next(const struct http_request_t *request, size_t *context);
 
 void
-http_urldecode_post_body_free(struct key_value_pair_t *);
+http_urldecode_post_body_free(struct http_key_value_pair_t *);
 
 #ifdef _MSC_VER
 #pragma warning(pop)
