@@ -18,7 +18,7 @@ struct process_start_info_t
     int timeout_ms;
 };
 
-enum process_status_t
+enum process_state_t
 {
     PROCESS_STATUS_NOT_STARTED      = 0x00,
     PROCESS_STATUS_RUNNING          = 0x01,
@@ -30,18 +30,34 @@ enum process_status_t
     PROCESS_STATUS_EXITED           = 0x14,
 };
 
-#define process_finished(x) ((x) & PROCESS_STATUS_FINISHED_BIT)
+struct process_status_t
+{
+    enum process_state_t state;
+    int exit_code;
+    char log_path[260];
+};
+
+#define process_finished(x) (!!((x) & PROCESS_STATUS_FINISHED_BIT))
 
 struct process_handle_t;
 
 struct process_handle_t *
 process_start(struct process_start_info_t *start_info);
 
-enum process_status_t
-process_done(struct process_handle_t *handle, int *exit_code);
+void
+process_get_status(struct process_status_t *status, struct process_handle_t *handle);
 
 int
 process_kill(struct process_handle_t *handle);
 
 void
 process_free(struct process_handle_t *handle);
+
+void *
+process_start_info_serialize(size_t *length, struct process_start_info_t *start_info);
+
+struct process_start_info_t *
+process_start_info_deserialize(void *buffer, size_t length);
+
+void
+process_start_info_free(struct process_start_info_t *);

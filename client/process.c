@@ -33,10 +33,12 @@ struct process_handle_t
 
     HANDLE job_object;
     HANDLE thread_handle;
+    HANDLE timeout_thread_handle;
     HANDLE process_started_event;
 
-    enum process_status_t process_status;
+    enum process_state_t process_state;
     int process_error;
+    int timeout_ms;
 };
 
 int
@@ -225,6 +227,8 @@ process_thread(LPVOID parameter)
         goto failed_process_cleanup;
     }
 
+    handle->process_state = PROCESS_STATUS_RUNNING;
+
     rv = SetEvent(handle->process_started_event);
     if (rv == FALSE)
     {
@@ -306,10 +310,37 @@ failed_process_cleanup:
     CloseHandle(handle->process_information.hProcess);
 
 failed:
-    handle->process_status = PROCESS_STATUS_FAILED_TO_LAUNCH;
+    handle->process_state = PROCESS_STATUS_FAILED_TO_LAUNCH;
     handle->process_error = GetLastError();
     /* RV CHECK */ SetEvent(handle->process_started_event);
     return ~(DWORD)0;
+}
+
+static DWORD WINAPI
+timeout_thread(LPVOID parameter)
+{
+    struct process_handle_t *handle;
+    DWORD timeout;
+    HANDLE process_handle;
+    HANDLE job_handle;
+    DWORD rv;
+
+    handle = parameter;
+    process_handle = handle->process_handle;
+    timeout = (DWORD)handle->timeout_ms;
+
+    rv = WaitForSingleObject(process_handle, timeout);
+    if (rv == WAIT_TIMEOUT)
+    {
+        if (!TerminateJobObject(handle->job_object, (UINT)-1))
+        {
+            log_os_error(GetLastError(), "TerminateJobObject failed");
+        }
+
+        handle->process_state = PROCESS_STATUS_TIMED_OUT;
+    }
+
+    return 0;
 }
 
 struct process_handle_t *
@@ -328,6 +359,7 @@ process_start(struct process_start_info_t *start_info)
     handle->args = process_utf8_to_wide(start_info->args);
     handle->working_dir = process_utf8_to_wide(start_info->working_dir);
     handle->environment_block = process_build_environment_block(start_info->environment, start_info->num_environment_variables);
+    handle->timeout_ms = start_info->timeout_ms;
 
     if (!process_setup_io_handles(handle))
     {
@@ -353,22 +385,65 @@ process_start(struct process_start_info_t *start_info)
         NULL);
 
     /* RV CHECK */ WaitForSingleObject(handle->process_started_event, INFINITE);
+
+    if (start_info->timeout_ms > 0)
+    {
+        handle->timeout_thread_handle = CreateThread(
+            NULL,
+            0,
+            timeout_thread,
+            handle,
+            0,
+            NULL);
+    }
+
     return handle;
 }
 
-enum process_status_t
-process_status(struct process_handle_t *handle, int *exit_code)
+void
+process_get_status(struct process_status_t *status, struct process_handle_t *handle)
 {
-    return 0;
+    DWORD rv;
+    DWORD process_exit_code;
+
+    if (!process_finished(handle->process_state))
+    {
+        rv = WaitForSingleObject(handle->job_object, 0);
+        if (rv == WAIT_OBJECT_0)
+        {
+            handle->process_state = PROCESS_STATUS_EXITED;
+        }
+    }
+
+    /*
+     * This is not handled in an else case as it may not trigger if the process
+     * exit is handled in the block above.
+     */
+    if (process_finished(handle->process_state))
+    {
+        if (!GetExitCodeProcess(handle->process_handle, &process_exit_code))
+        {
+            log_os_error(GetLastError(), "Unable to get process exit code");
+        }
+    }
+
+    status->exit_code = (int)process_exit_code;
+    status->state = handle->process_state;
+    WideCharToMultiByte(CP_UTF8, 0, handle->log_file_name, -1, status->log_path, sizeof status->log_path, NULL, NULL);
 }
 
 int
 process_kill(struct process_handle_t *handle)
 {
+    TerminateJobObject(handle->job_object, (UINT)-2);
+    handle->process_state = PROCESS_STATUS_KILLED;
+
     return 0;
 }
 
 void
 process_free(struct process_handle_t *handle)
 {
+#error
 }
+

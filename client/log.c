@@ -10,19 +10,30 @@
 FILE *log_file;
 CRITICAL_SECTION log_lock;
 
-static void
-log_shutdown()
-{
-    fflush(log_file);
-    fclose(log_file);
-}
-
 void
 log_init(const char *log_path)
 {
     log_file = fopen(log_path, "a");
     InitializeCriticalSection(&log_lock);
     atexit(log_shutdown);
+}
+
+void
+log_shutdown()
+{
+    EnterCriticalSection(&log_lock);
+
+    if (log_file == NULL)
+    {
+        LeaveCriticalSection(&log_lock);
+        return;
+    }
+
+    fflush(log_file);
+    fclose(log_file);
+    log_file = NULL;
+
+    LeaveCriticalSection(&log_lock);
 }
 
 static void

@@ -4,6 +4,9 @@ void
 log_init(const char *log_path);
 
 void
+log_shutdown(void);
+
+void
 log_write_os_error(const char *file, int line, int error, const char *format, ...);
 
 void
