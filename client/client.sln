@@ -4,10 +4,20 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 14.0.23107.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "client", "client.vcxproj", "{0C4BE878-EC2D-42F6-95B1-853B69EFB990}"
+	ProjectSection(ProjectDependencies) = postProject
+		{6F238A53-BF9E-4A19-904E-C70F33922D3C} = {6F238A53-BF9E-4A19-904E-C70F33922D3C}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libclient", "libclient\libclient.vcxproj", "{6F238A53-BF9E-4A19-904E-C70F33922D3C}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "client_test", "client_test\client_test.vcxproj", "{62908D3B-3C4A-48AA-AAEE-C83B829C730C}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B1C8F409-A38B-47A9-AC34-7CC3E1F4EDDA} = {B1C8F409-A38B-47A9-AC34-7CC3E1F4EDDA}
+		{6F238A53-BF9E-4A19-904E-C70F33922D3C} = {6F238A53-BF9E-4A19-904E-C70F33922D3C}
+		{66D52F6D-57C9-47B3-88F2-1F04C2F24307} = {66D52F6D-57C9-47B3-88F2-1F04C2F24307}
+		{8DCE5299-9CFA-41CE-AC57-C5D05A73521B} = {8DCE5299-9CFA-41CE-AC57-C5D05A73521B}
+		{EB5EF2EB-EFC9-459C-8BC2-CB02C96FDFBB} = {EB5EF2EB-EFC9-459C-8BC2-CB02C96FDFBB}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "client_test_fastexit_success", "client_test_fastexit\client_test_fastexit.vcxproj", "{8DCE5299-9CFA-41CE-AC57-C5D05A73521B}"
 EndProject
