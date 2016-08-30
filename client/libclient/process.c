@@ -73,7 +73,7 @@ WCHAR *
 process_build_environment_block(struct process_key_value_pair_t *environment, int num_environment_variables)
 {
     int i;
-    int alloc_size;
+    intptr_t alloc_size;
     WCHAR *environment_block;
     WCHAR *ptr;
 
@@ -103,7 +103,7 @@ process_build_environment_block(struct process_key_value_pair_t *environment, in
             environment[i].key,
             -1,
             ptr,
-            alloc_size - (ptr - environment_block));
+            (int)(alloc_size - (ptr - environment_block)));
 
         *(ptr - 1) = L'=';
 
@@ -113,7 +113,7 @@ process_build_environment_block(struct process_key_value_pair_t *environment, in
             environment[i].value,
             -1,
             ptr,
-            alloc_size - (ptr - environment_block));
+            (int)(alloc_size - (ptr - environment_block)));
     }
 
     return environment_block;
@@ -245,23 +245,23 @@ process_thread(LPVOID parameter)
 
     for (;;)
     {
-        BOOL rv;
+        BOOL read_success;
         DWORD bytes_read;
         DWORD total_bytes_written;
 
-        rv = ReadFile(
+        read_success = ReadFile(
             handle->read_pipe,
             output_buffer,
             (DWORD)output_buffer_size,
             &bytes_read,
             NULL);
 
-        if (!rv || bytes_read == 0)
+        if (!read_success || bytes_read == 0)
         {
-            DWORD rv;
+            DWORD process_complete;
 
-            rv = WaitForSingleObject(handle->process_information.hProcess, 0);
-            if (rv == WAIT_TIMEOUT)
+            process_complete = WaitForSingleObject(handle->process_information.hProcess, 0);
+            if (process_complete == WAIT_TIMEOUT)
             {
                 /*
                  * Process is still running.
@@ -269,7 +269,7 @@ process_thread(LPVOID parameter)
                 continue;
             }
 
-            if (rv == WAIT_OBJECT_0)
+            if (process_complete == WAIT_OBJECT_0)
             {
                 /*
                  * Process has completed.
@@ -277,7 +277,7 @@ process_thread(LPVOID parameter)
                 break;
             }
             
-            if (rv == WAIT_FAILED)
+            if (process_complete == WAIT_FAILED)
             {
                 goto failed_process_cleanup;
             }
@@ -322,7 +322,6 @@ timeout_thread(LPVOID parameter)
     struct process_handle_t *handle;
     DWORD timeout;
     HANDLE process_handle;
-    HANDLE job_handle;
     DWORD rv;
 
     handle = parameter;
