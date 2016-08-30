@@ -23,6 +23,7 @@
 #endif
 
 #include "http_server.h"
+#include "job.h"
 #include "log.h"
 
 #ifndef MIN
@@ -415,13 +416,22 @@ main(void)
         { "/", HTTP_METHOD_POST, post_handler }
     };
 
-    log_init("analemma_client.log");
+    __try
+    {
+        log_init("analemma_client.log");
+        job_init();
 
-    rv = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    ENFORCE(rv == NO_ERROR, "Unable to start winsock");
+        rv = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+        ENFORCE(rv == NO_ERROR, "Unable to start winsock");
 
-    http_register_endpoints(endpoints, ARRAY_COUNT(endpoints));
-    client_begin();
+        http_register_endpoints(endpoints, ARRAY_COUNT(endpoints));
+        client_begin();
+    }
+    __finally
+    {
+        job_shutdown();
+        log_shutdown();
+    }
 
     return 0;
 }
