@@ -403,7 +403,7 @@ void
 process_get_status(struct process_status_t *status, struct process_handle_t *handle)
 {
     DWORD rv;
-    DWORD process_exit_code;
+    DWORD process_exit_code = 0;
 
     if (!process_finished(handle->process_state))
     {
@@ -443,6 +443,23 @@ process_kill(struct process_handle_t *handle)
 void
 process_free(struct process_handle_t *handle)
 {
-#error
+    WaitForSingleObject(handle->thread_handle, INFINITE);
+    if (handle->timeout_thread_handle != NULL)
+    {
+        WaitForSingleObject(handle->timeout_thread_handle, INFINITE);
+    }
+
+    free(handle->program);
+    free(handle->args);
+    free(handle->working_dir);
+
+    CloseHandle(handle->read_pipe);
+    CloseHandle(handle->write_pipe);
+    CloseHandle(handle->process_handle);
+    CloseHandle(handle->log_file_handle);
+    CloseHandle(handle->job_object);
+    CloseHandle(handle->thread_handle);
+    CloseHandle(handle->timeout_thread_handle);
+    CloseHandle(handle->process_started_event);
 }
 

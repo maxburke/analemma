@@ -220,7 +220,11 @@ client_worker_thread(LPVOID parameter)
 
                 if (bytes_serialized > 0)
                 {
-                    send_rv = send(connection, response_buffer, bytes_serialized, 0);
+                    int bytes_to_send;
+
+                    assert(bytes_serialized < INT_MAX);
+                    bytes_to_send = (int)bytes_serialized;
+                    send_rv = send(connection, response_buffer, bytes_to_send, 0);
 
                     if (send_rv == SOCKET_ERROR)
                     {

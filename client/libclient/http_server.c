@@ -890,7 +890,7 @@ http_from_percent_encoded_value(const char **out, const char *ptr)
         src[1] = ptr[2];
         src[2] = 0;
         
-        value = (int)strtol(src, NULL, 16);
+        value = (char)strtol(src, NULL, 16);
         *out = ptr + 3;
 
         return value;
