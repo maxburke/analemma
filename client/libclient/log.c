@@ -64,7 +64,7 @@ log_write_os_error(const char *file, int line, int error, const char *format, ..
     struct tm local_time;
     LPSTR system_error_message;
     HANDLE process_heap;
-    int buffer_size = 512;
+    int buffer_size = 1024;
     char *buffer = NULL;
     int rv;
     va_list format_parameters;
@@ -92,13 +92,15 @@ log_write_os_error(const char *file, int line, int error, const char *format, ..
             goto cleanup;
         }
 
-        rv = snprintf(buffer, sizeof buffer, "[%04d-%02d-%02d:%02d:%02d:%02d] ",
+        rv = snprintf(buffer, buffer_size, "[%04d-%02d-%02d:%02d:%02d:%02d] %s(%d): ",
             local_time.tm_year + 1900,
             local_time.tm_mon + 1,
             local_time.tm_mday,
             local_time.tm_hour,
             local_time.tm_min,
-            local_time.tm_sec);
+            local_time.tm_sec,
+            file,
+            line);
 
         CHECK_SUCCESS_AND_RESIZE();
 
@@ -108,7 +110,7 @@ log_write_os_error(const char *file, int line, int error, const char *format, ..
 
         CHECK_SUCCESS_AND_RESIZE();
 
-        rv += snprintf(buffer + rv, (sizeof buffer) - rv, ": (%d) %s", error, system_error_message);
+        rv += snprintf(buffer + rv, (sizeof buffer) - rv, ": (%d) %s\n", error, system_error_message);
 
         CHECK_SUCCESS_AND_RESIZE();
 
@@ -130,7 +132,7 @@ log_write(const char *file, int line, const char *format, ...)
 {
     time_t current_time;
     struct tm local_time;
-    int buffer_size = 512;
+    int buffer_size = 1024;
     char *buffer = NULL;
     int rv;
     va_list format_parameters;
@@ -147,13 +149,15 @@ log_write(const char *file, int line, const char *format, ...)
             goto cleanup;
         }
 
-        rv = snprintf(buffer, sizeof buffer, "[%04d-%02d-%02d:%02d:%02d:%02d] ",
+        rv = snprintf(buffer, buffer_size, "[%04d-%02d-%02d:%02d:%02d:%02d] %s(%d): ",
             local_time.tm_year + 1900,
             local_time.tm_mon + 1,
             local_time.tm_mday,
             local_time.tm_hour,
             local_time.tm_min,
-            local_time.tm_sec);
+            local_time.tm_sec,
+            file,
+            line);
 
         CHECK_SUCCESS_AND_RESIZE();
 
@@ -169,6 +173,7 @@ log_write(const char *file, int line, const char *format, ...)
     if (buffer)
     {
         log_write_string(buffer);
+        log_write_string("\n");
         _freea(buffer);
     }
 
