@@ -28,7 +28,7 @@ struct process_handle_t
 
     HANDLE read_pipe;
     HANDLE write_pipe;
-    HANDLE process_handle;
+//    HANDLE process_handle;
     HANDLE log_file_handle;
 
     HANDLE job_object;
@@ -53,6 +53,11 @@ process_utf8_to_wide(const char8_t *string)
     int alloc_size;
     int rv;
     WCHAR *wide_string;
+
+    if (string == NULL)
+    {
+        return NULL;
+    }
     
     alloc_size = process_wchar_strlen_with_null(string);
     wide_string = calloc(alloc_size, sizeof(WCHAR));
@@ -64,7 +69,7 @@ process_utf8_to_wide(const char8_t *string)
 
     rv = MultiByteToWideChar(CP_UTF8, 0, string, -1, wide_string, alloc_size);
     assert(rv == alloc_size);
-    assert(wide_string[alloc_size - 1] == L'0');
+    assert(wide_string[alloc_size - 1] == L'\0');
 
     return wide_string;
 }
@@ -325,7 +330,7 @@ timeout_thread(LPVOID parameter)
     DWORD rv;
 
     handle = parameter;
-    process_handle = handle->process_handle;
+    process_handle = handle->process_information.hProcess;
     timeout = (DWORD)handle->timeout_ms;
 
     rv = WaitForSingleObject(process_handle, timeout);
@@ -400,14 +405,19 @@ process_start(struct process_start_info_t *start_info)
 }
 
 void
-process_get_status(struct process_status_t *status, struct process_handle_t *handle)
+process_get_status(struct process_status_t *status, struct process_handle_t *handle, unsigned int exit_wait_ms)
 {
     DWORD rv;
     DWORD process_exit_code = 0;
 
     if (!process_finished(handle->process_state))
     {
-        rv = WaitForSingleObject(handle->job_object, 0);
+        rv = WaitForSingleObject(handle->process_information.hProcess, exit_wait_ms);
+        if (rv == WAIT_FAILED)
+        {
+            log_os_error(GetLastError(), "Unable to wait for process to exit");
+        }
+
         if (rv == WAIT_OBJECT_0)
         {
             handle->process_state = PROCESS_STATUS_EXITED;
@@ -420,7 +430,7 @@ process_get_status(struct process_status_t *status, struct process_handle_t *han
      */
     if (process_finished(handle->process_state))
     {
-        if (!GetExitCodeProcess(handle->process_handle, &process_exit_code))
+        if (!GetExitCodeProcess(handle->process_information.hProcess, &process_exit_code))
         {
             log_os_error(GetLastError(), "Unable to get process exit code");
         }
@@ -444,9 +454,12 @@ void
 process_free(struct process_handle_t *handle)
 {
     WaitForSingleObject(handle->thread_handle, INFINITE);
+    CloseHandle(handle->thread_handle);
+
     if (handle->timeout_thread_handle != NULL)
     {
         WaitForSingleObject(handle->timeout_thread_handle, INFINITE);
+        CloseHandle(handle->timeout_thread_handle);
     }
 
     free(handle->program);
@@ -455,11 +468,10 @@ process_free(struct process_handle_t *handle)
 
     CloseHandle(handle->read_pipe);
     CloseHandle(handle->write_pipe);
-    CloseHandle(handle->process_handle);
+    CloseHandle(handle->process_information.hThread);
+    CloseHandle(handle->process_information.hProcess);
     CloseHandle(handle->log_file_handle);
     CloseHandle(handle->job_object);
-    CloseHandle(handle->thread_handle);
-    CloseHandle(handle->timeout_thread_handle);
     CloseHandle(handle->process_started_event);
 }
 
