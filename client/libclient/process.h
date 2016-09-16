@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 typedef char char8_t;
 
 struct process_key_value_pair_t
@@ -45,7 +47,7 @@ struct process_handle_t *
 process_start(struct process_start_info_t *start_info);
 
 void
-process_get_status(struct process_status_t *status, struct process_handle_t *handle);
+process_get_status(struct process_status_t *status, struct process_handle_t *handle, unsigned int exit_wait_ms);
 
 int
 process_kill(struct process_handle_t *handle);
