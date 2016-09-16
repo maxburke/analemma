@@ -22,6 +22,7 @@
 #pragma warning(disable:4204)
 #endif
 
+#include "base.h"
 #include "http_server.h"
 #include "job.h"
 #include "log.h"
@@ -29,9 +30,6 @@
 #ifndef MIN
 #define MIN(a, b) ((a)<(b)?(a):(b))
 #endif
-
-#define UNUSED(x) (void)x
-#define ARRAY_COUNT(x) ((sizeof(x))/sizeof(x[0]))
 
 FILE *g_log;
 HANDLE g_work_available;
